@@ -33,6 +33,7 @@ Thumbs.db
 results/*.npy
 results/*.npz
 !results/model_weights.npz
+!results/scores.npz
 
 # Personal notes & draft files (kept locally for submission preparation, excluded from GitHub)
 agent_decision.md

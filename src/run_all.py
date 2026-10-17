@@ -239,6 +239,7 @@ def run(force_recompute: bool = False) -> dict:
             m: {
                 "aurc": round(risk_cov_data[m]["aurc"], 4),
                 "coverage_at_90acc": round(risk_cov_data[m]["coverage_at_90acc"], 4),
+                "coverage_at_95acc": round(risk_cov_data[m]["coverage_at_95acc"], 4),
             }
             for m in methods
         },
@@ -251,6 +252,12 @@ def run(force_recompute: bool = False) -> dict:
     with open(PATHS["metrics_json"], "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nSaved structured metrics -> {PATHS['metrics_json']}")
+
+    # Save risk_coverage.json for dashboard error-rate plotting
+    risk_cov_json_path = PATHS["results"] / "risk_coverage.json"
+    with open(risk_cov_json_path, "w") as f:
+        json.dump(risk_cov_data, f, indent=2)
+    print(f"Saved risk-coverage curves -> {risk_cov_json_path}")
 
     # Save summary.md
     summary_text = build_summary_markdown(results)

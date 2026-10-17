@@ -124,18 +124,21 @@
   "risk_coverage": {
     "MSP": {
       "aurc": 0.0115,
-      "coverage_at_90acc": 1.0
+      "coverage_at_90acc": 1.0,
+      "coverage_at_95acc": 0.93
     },
     "Energy": {
       "aurc": 0.019,
-      "coverage_at_90acc": 1.0
+      "coverage_at_90acc": 1.0,
+      "coverage_at_95acc": 0.88
     },
     "Mahalanobis": {
       "aurc": 0.0717,
-      "coverage_at_90acc": 1.0
+      "coverage_at_90acc": 1.0,
+      "coverage_at_95acc": 0.0
     }
   },
   "timing": {
-    "total_seconds": 39.48
+    "total_seconds": 33.28
   }
 }

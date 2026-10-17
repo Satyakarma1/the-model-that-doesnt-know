@@ -1,0 +1,326 @@
+[
+  {
+    "file": "sample_known_airplane_0.png",
+    "true_class": "airplane",
+    "true_id": 0,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3188,
+    "source_dataset_index": 6355
+  },
+  {
+    "file": "sample_known_airplane_1.png",
+    "true_class": "airplane",
+    "true_id": 0,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 4772,
+    "source_dataset_index": 9544
+  },
+  {
+    "file": "sample_known_airplane_2.png",
+    "true_class": "airplane",
+    "true_id": 0,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 2777,
+    "source_dataset_index": 5524
+  },
+  {
+    "file": "sample_known_automobile_0.png",
+    "true_class": "automobile",
+    "true_id": 1,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3691,
+    "source_dataset_index": 7324
+  },
+  {
+    "file": "sample_known_automobile_1.png",
+    "true_class": "automobile",
+    "true_id": 1,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 1925,
+    "source_dataset_index": 3838
+  },
+  {
+    "file": "sample_known_automobile_2.png",
+    "true_class": "automobile",
+    "true_id": 1,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 2951,
+    "source_dataset_index": 5887
+  },
+  {
+    "file": "sample_known_bird_0.png",
+    "true_class": "bird",
+    "true_id": 2,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3022,
+    "source_dataset_index": 6040
+  },
+  {
+    "file": "sample_known_bird_1.png",
+    "true_class": "bird",
+    "true_id": 2,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3772,
+    "source_dataset_index": 7488
+  },
+  {
+    "file": "sample_known_bird_2.png",
+    "true_class": "bird",
+    "true_id": 2,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 868,
+    "source_dataset_index": 1756
+  },
+  {
+    "file": "sample_known_cat_0.png",
+    "true_class": "cat",
+    "true_id": 3,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3995,
+    "source_dataset_index": 7924
+  },
+  {
+    "file": "sample_known_cat_1.png",
+    "true_class": "cat",
+    "true_id": 3,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 4182,
+    "source_dataset_index": 8310
+  },
+  {
+    "file": "sample_known_cat_2.png",
+    "true_class": "cat",
+    "true_id": 3,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 1730,
+    "source_dataset_index": 3479
+  },
+  {
+    "file": "sample_known_deer_0.png",
+    "true_class": "deer",
+    "true_id": 4,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 1957,
+    "source_dataset_index": 3914
+  },
+  {
+    "file": "sample_known_deer_1.png",
+    "true_class": "deer",
+    "true_id": 4,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3140,
+    "source_dataset_index": 6254
+  },
+  {
+    "file": "sample_known_deer_2.png",
+    "true_class": "deer",
+    "true_id": 4,
+    "role": "known",
+    "split": "known_test",
+    "split_index": 3976,
+    "source_dataset_index": 7895
+  },
+  {
+    "file": "sample_near_dog_0.png",
+    "true_class": "dog",
+    "true_id": 5,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 1888,
+    "source_dataset_index": 3796
+  },
+  {
+    "file": "sample_near_dog_1.png",
+    "true_class": "dog",
+    "true_id": 5,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 4712,
+    "source_dataset_index": 9414
+  },
+  {
+    "file": "sample_near_dog_2.png",
+    "true_class": "dog",
+    "true_id": 5,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 1636,
+    "source_dataset_index": 3255
+  },
+  {
+    "file": "sample_near_frog_0.png",
+    "true_class": "frog",
+    "true_id": 6,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 2025,
+    "source_dataset_index": 4044
+  },
+  {
+    "file": "sample_near_frog_1.png",
+    "true_class": "frog",
+    "true_id": 6,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 3562,
+    "source_dataset_index": 7163
+  },
+  {
+    "file": "sample_near_frog_2.png",
+    "true_class": "frog",
+    "true_id": 6,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 996,
+    "source_dataset_index": 1974
+  },
+  {
+    "file": "sample_near_horse_0.png",
+    "true_class": "horse",
+    "true_id": 7,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 3855,
+    "source_dataset_index": 7758
+  },
+  {
+    "file": "sample_near_horse_1.png",
+    "true_class": "horse",
+    "true_id": 7,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 3299,
+    "source_dataset_index": 6612
+  },
+  {
+    "file": "sample_near_horse_2.png",
+    "true_class": "horse",
+    "true_id": 7,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 4445,
+    "source_dataset_index": 8934
+  },
+  {
+    "file": "sample_near_ship_0.png",
+    "true_class": "ship",
+    "true_id": 8,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 4665,
+    "source_dataset_index": 9347
+  },
+  {
+    "file": "sample_near_ship_1.png",
+    "true_class": "ship",
+    "true_id": 8,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 1816,
+    "source_dataset_index": 3643
+  },
+  {
+    "file": "sample_near_ship_2.png",
+    "true_class": "ship",
+    "true_id": 8,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 540,
+    "source_dataset_index": 1059
+  },
+  {
+    "file": "sample_near_truck_0.png",
+    "true_class": "truck",
+    "true_id": 9,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 2147,
+    "source_dataset_index": 4297
+  },
+  {
+    "file": "sample_near_truck_1.png",
+    "true_class": "truck",
+    "true_id": 9,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 4222,
+    "source_dataset_index": 8506
+  },
+  {
+    "file": "sample_near_truck_2.png",
+    "true_class": "truck",
+    "true_id": 9,
+    "role": "near",
+    "split": "near_ood",
+    "split_index": 3262,
+    "source_dataset_index": 6542
+  },
+  {
+    "file": "sample_far_t_shirt_0.png",
+    "true_class": "t-shirt",
+    "true_id": 0,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 4006,
+    "source_dataset_index": 4006
+  },
+  {
+    "file": "sample_far_t_shirt_1.png",
+    "true_class": "t-shirt",
+    "true_id": 0,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 9237,
+    "source_dataset_index": 9237
+  },
+  {
+    "file": "sample_far_t_shirt_2.png",
+    "true_class": "t-shirt",
+    "true_id": 0,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 636,
+    "source_dataset_index": 636
+  },
+  {
+    "file": "sample_far_ankle_boot_0.png",
+    "true_class": "ankle boot",
+    "true_id": 9,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 5386,
+    "source_dataset_index": 5386
+  },
+  {
+    "file": "sample_far_ankle_boot_1.png",
+    "true_class": "ankle boot",
+    "true_id": 9,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 7246,
+    "source_dataset_index": 7246
+  },
+  {
+    "file": "sample_far_ankle_boot_2.png",
+    "true_class": "ankle boot",
+    "true_id": 9,
+    "role": "far",
+    "split": "far_ood",
+    "split_index": 6998,
+    "source_dataset_index": 6998
+  }
+]

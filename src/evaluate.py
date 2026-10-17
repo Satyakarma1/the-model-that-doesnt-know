@@ -115,9 +115,12 @@ def risk_coverage(
     # Area Under Risk-Coverage Curve (AURC) via trapezoidal integration
     aurc = float(trapezoid(risks, coverages))
 
-    # Largest coverage with accuracy >= 0.90
+    # Largest coverage with accuracy >= 0.90 and >= 0.95
     valid_covs = coverages[accuracies >= 0.90]
     coverage_at_90acc = float(np.max(valid_covs)) if len(valid_covs) > 0 else 0.0
+
+    valid_covs_95 = coverages[accuracies >= 0.95]
+    coverage_at_95acc = float(np.max(valid_covs_95)) if len(valid_covs_95) > 0 else 0.0
 
     return {
         "coverage": coverages.tolist(),
@@ -125,6 +128,7 @@ def risk_coverage(
         "risk": risks.tolist(),
         "aurc": aurc,
         "coverage_at_90acc": coverage_at_90acc,
+        "coverage_at_95acc": coverage_at_95acc,
     }
 
 

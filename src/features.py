@@ -11,7 +11,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torchvision.models import ResNet18_Weights, resnet18
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = lambda x, **kwargs: x
 
 from src.config import DEVICE, FEAT_DIM, PATHS, set_seed
 from src.data import make_loaders

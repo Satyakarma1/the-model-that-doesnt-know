@@ -28,11 +28,10 @@ from src.config import (
     PATHS,
     TARGET_TPR,
 )
-from src.data import load_image_at
 from src.features import build_backbone
-from src.probe import fit_probe, fit_temperature, get_logits, get_proba
-from src.run_all import run
-from src.scores import energy_score, fit_gaussian_stats, mahalanobis_score, msp_score
+from src.probe import get_logits, get_proba
+from src.scores import energy_score, mahalanobis_score, msp_score
+from sklearn.linear_model import LogisticRegression
 
 st.set_page_config(
     page_title="OOD Detector | AI/ML Recruitment Task",
@@ -44,9 +43,31 @@ st.set_page_config(
 
 @st.cache_resource
 def load_system():
-    """Caches backbone, classifier, temperature, and Mahalanobis stats in memory."""
+    """Caches backbone, classifier, temperature, and Mahalanobis stats in memory.
+    
+    Loads pre-computed weights from results/model_weights.npz for standalone deployment.
+    Falls back to raw cache/ if model_weights.npz is not found.
+    """
     backbone = build_backbone(DEVICE)
+    weights_path = PATHS["results"] / "model_weights.npz"
 
+    if weights_path.exists():
+        weights = np.load(weights_path)
+        clf = LogisticRegression()
+        clf.classes_ = np.arange(len(CIFAR_KNOWN_NAMES))
+        clf.coef_ = weights["coef"]
+        clf.intercept_ = weights["intercept"]
+        mean = weights["scaler_mean"]
+        std = weights["scaler_std"]
+        T = float(weights["temperature"][0])
+        means = weights["gaussian_means"]
+        cov = weights["gaussian_cov"]
+        thr_near_95 = float(weights["thr_near_95"][0])
+        thr_far_95 = float(weights["thr_far_95"][0])
+        thr_balanced = float(weights["thr_balanced"][0])
+        return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_balanced
+
+    # Fallback to local feature cache if model_weights.npz is missing
     train_data = np.load(PATHS["cache"] / "features_known_train.npz")
     val_data = np.load(PATHS["cache"] / "features_known_val.npz")
     scaler = np.load(PATHS["cache"] / "scaler.npz")
@@ -57,6 +78,8 @@ def load_system():
     X_val = (val_data["f"] - mean) / std
     y_val = val_data["y"]
 
+    from src.probe import fit_probe, fit_temperature
+    from src.scores import fit_gaussian_stats
     clf = fit_probe(X_train, y_train, C=0.01)
     val_logits = get_logits(clf, X_val)
     T, _, _ = fit_temperature(val_logits, y_val)
@@ -73,7 +96,6 @@ def load_system():
 
     thr_near_95, near_fpr = fpr_at_tpr(score_id, score_near, target_tpr=TARGET_TPR)
     thr_far_95, far_fpr = fpr_at_tpr(score_id, score_far, target_tpr=TARGET_TPR)
-    # Balanced operating threshold: allows high-confidence known inputs (like cat & deer) through
     thr_balanced = -5.0
 
     return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_balanced
@@ -241,20 +263,25 @@ with tab1:
         )
 
         sample_mapping = {
-            "Known Class: Airplane (CIFAR-10 ID)": ("known_test", 0, "Airplane (Known)"),
-            "Known Class: Automobile (CIFAR-10 ID)": ("known_test", 1, "Automobile (Known)"),
-            "Known Class: Bird (CIFAR-10 ID)": ("known_test", 2, "Bird (Known)"),
-            "Known Class: Cat (CIFAR-10 ID)": ("known_test", 3, "Cat (Known)"),
-            "Known Class: Deer (CIFAR-10 ID)": ("known_test", 4, "Deer (Known)"),
-            "Near-OOD (Unknown): Dog (Semantic neighbor of Cat)": ("near_ood", 0, "Dog (Near-OOD)"),
-            "Near-OOD (Unknown): Horse (Semantic neighbor of Deer)": ("near_ood", 2, "Horse (Near-OOD)"),
-            "Near-OOD (Unknown): Truck (Semantic neighbor of Automobile)": ("near_ood", 4, "Truck (Near-OOD)"),
-            "Far-OOD (Unknown): Ankle Boot (FashionMNIST)": ("far_ood", 0, "Ankle Boot (Far-OOD)"),
-            "Far-OOD (Unknown): T-shirt / Top (FashionMNIST)": ("far_ood", 1, "T-shirt (Far-OOD)"),
+            "Known Class: Airplane (CIFAR-10 ID)": ("sample_known_airplane.png", "known_test", 0, "Airplane (Known)"),
+            "Known Class: Automobile (CIFAR-10 ID)": ("sample_known_automobile.png", "known_test", 1, "Automobile (Known)"),
+            "Known Class: Bird (CIFAR-10 ID)": ("sample_known_bird.png", "known_test", 2, "Bird (Known)"),
+            "Known Class: Cat (CIFAR-10 ID)": ("sample_known_cat.png", "known_test", 3, "Cat (Known)"),
+            "Known Class: Deer (CIFAR-10 ID)": ("sample_known_deer.png", "known_test", 4, "Deer (Known)"),
+            "Near-OOD (Unknown): Dog (Semantic neighbor of Cat)": ("sample_near_dog.png", "near_ood", 0, "Dog (Near-OOD)"),
+            "Near-OOD (Unknown): Horse (Semantic neighbor of Deer)": ("sample_near_horse.png", "near_ood", 2, "Horse (Near-OOD)"),
+            "Near-OOD (Unknown): Truck (Semantic neighbor of Automobile)": ("sample_near_truck.png", "near_ood", 4, "Truck (Near-OOD)"),
+            "Far-OOD (Unknown): Ankle Boot (FashionMNIST)": ("sample_far_boot.png", "far_ood", 0, "Ankle Boot (Far-OOD)"),
+            "Far-OOD (Unknown): T-shirt / Top (FashionMNIST)": ("sample_far_tshirt.png", "far_ood", 1, "T-shirt (Far-OOD)"),
         }
-        split_name, s_idx, sample_info = sample_mapping[sample_choice]
-        raw_arr = load_image_at(split_name, s_idx)
-        image_to_test = Image.fromarray(raw_arr)
+        filename, split_name, s_idx, sample_info = sample_mapping[sample_choice]
+        sample_img_path = PATHS["figures"] / "samples" / filename
+        if sample_img_path.exists():
+            image_to_test = Image.open(sample_img_path).convert("RGB")
+        else:
+            from src.data import load_image_at
+            raw_arr = load_image_at(split_name, s_idx)
+            image_to_test = Image.fromarray(raw_arr)
 
     else:
         uploaded_file = st.file_uploader("Upload an image (PNG, JPG, JPEG):", type=["png", "jpg", "jpeg"])
@@ -274,14 +301,14 @@ with tab1:
             # Verdict Banner
             if res["is_ood"]:
                 st.error(
-                    f"### 🛑 REJECTED: Uncertain / Out-of-Distribution\n"
-                    f"**Energy Score**: `{res['energy']:.3f}` $\ge$ Threshold `{active_energy_thr:.3f}`.  \n"
+                    f"### 🛑 REJECTED: Uncertain / Out-of-Distribution\n\n"
+                    f"**Energy Score**: `{res['energy']:.3f}` ≥ Threshold `{active_energy_thr:.3f}`  \n"
                     f"The model flags this image as unfamiliar and refuses to output a confident false guess."
                 )
             else:
                 st.success(
-                    f"### ✅ ACCEPTED: Familiar In-Distribution Category\n"
-                    f"**Energy Score**: `{res['energy']:.3f}` $<$ Threshold `{active_energy_thr:.3f}`.  \n"
+                    f"### ✅ ACCEPTED: Familiar In-Distribution Category\n\n"
+                    f"**Energy Score**: `{res['energy']:.3f}` < Threshold `{active_energy_thr:.3f}`  \n"
                     f"The model recognizes this category with high familiarity."
                 )
 
@@ -411,6 +438,18 @@ with tab3:
     st.write("Click below to re-run the full pipeline and refresh metrics and figures from cached features.")
 
     if st.button("🚀 Re-Run Full Benchmark Pipeline", type="primary"):
-        with st.spinner("Executing pipeline (evaluating detectors, risk-coverage, rendering figures)..."):
-            updated_results = run()
-        st.success(f"Benchmark completed successfully in {updated_results['timing']['total_seconds']} seconds! Refresh to see new figures.")
+        cache_train = PATHS["cache"] / "features_known_train.npz"
+        data_cifar = PATHS["data"] / "cifar-10-batches-py"
+        if not cache_train.exists() and not data_cifar.exists():
+            st.warning(
+                "⚠️ Full re-training requires local raw datasets or cached feature files (~200MB, excluded from GitHub). "
+                "The dashboard is operating in pre-compiled deployment mode with `results/model_weights.npz` and `results/metrics.json`."
+            )
+        else:
+            with st.spinner("Executing pipeline (evaluating detectors, risk-coverage, rendering figures)..."):
+                try:
+                    from src.run_all import run
+                    updated_results = run()
+                    st.success(f"Benchmark completed successfully in {updated_results['timing']['total_seconds']} seconds! Refresh to see new figures.")
+                except Exception as e:
+                    st.error(f"Execution failed: {e}")

@@ -26,7 +26,10 @@ cache/
 .idea/
 .DS_Store
 Thumbs.db
+.agents/
+.claude/
 
-# Results - commit summary.md, but ignore huge raw dumps if any
+# Results - commit summary.md and packaged model weights, but ignore raw dumps
 results/*.npy
 results/*.npz
+!results/model_weights.npz

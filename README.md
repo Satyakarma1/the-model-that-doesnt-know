@@ -2,7 +2,7 @@
 
 An empirical machine learning study investigating out-of-distribution (OOD) detection, probability calibration, and selective classification in computer vision.
 
-Built for the **CodeChef-VIT Promotional Recruitment Cycle 2026-27 (AI and Machine Learning Track — Task 1: "The Model That Doesn't Know")**.
+
 
 ---
 

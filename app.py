@@ -241,6 +241,45 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1: Probe an image
 # -----------------------------------------------------------------------------
 with tab1:
+    # Operating Threshold Controls
+    with st.container(border=True):
+        st.markdown("#### Operating threshold mode")
+        t_mode_col, t_slider_col = st.columns([1.6, 1.4])
+
+        with t_mode_col:
+            operating_preset = st.radio(
+                "Select operating threshold preset:",
+                [
+                    "Permissive Mode (-2.50) — allows familiar known images (e.g. Cat #0, Airplane #0) through",
+                    f"Balanced Deployment Mode ({thr_deploy:.2f}) — derived guarantee of ≤ 10% known false rejections",
+                    f"Strict Academic Near-OOD Benchmark ({thr_near_95:.2f} @ 95% TPR) — catches 95% of impostors",
+                    "Custom Threshold Slider",
+                ],
+                index=0,
+                key="tab1_threshold_preset",
+            )
+
+        with t_slider_col:
+            if "Permissive" in operating_preset:
+                active_thr = -2.50
+                st.caption("Permissive mode sets threshold to **-2.50**, allowing clean familiar known-class images to pass.")
+            elif "Balanced" in operating_preset:
+                active_thr = float(thr_deploy)
+                st.caption(f"Balanced mode sets threshold to **{thr_deploy:.2f}**, matching the derived 90% in-distribution acceptance guarantee.")
+            elif "Strict" in operating_preset:
+                active_thr = float(thr_near_95)
+                st.caption(f"Strict mode sets threshold to **{thr_near_95:.2f}**, tuned to catch 95% of subtle Near-OOD impostors (e.g. dogs/horses).")
+            else:
+                active_thr = st.slider(
+                    "Energy threshold (values above threshold are rejected):",
+                    min_value=-12.0,
+                    max_value=0.0,
+                    value=float(thr_deploy),
+                    step=0.25,
+                    key="tab1_custom_slider",
+                )
+                st.caption(f"Active threshold: **{active_thr:.2f}**. Move slider right for more acceptance, left for stricter rejection.")
+
     source_choice = st.segmented_control(
         "Image source",
         options=["Curated samples", "Your own image"],
@@ -300,7 +339,6 @@ with tab1:
                     st.caption("Custom image upload (Ground truth unlabelled)")
 
         with c_right:
-            active_thr = thr_deploy
             res = classify_and_filter(
                 image_to_test, backbone, clf, T, means, cov, mean, std, active_thr
             )
@@ -334,7 +372,27 @@ with tab1:
                             "This is the failure mode the study is about."
                         )
                 else:
-                    st.caption("Ground truth is unknown. Evaluated against the deployment threshold.")
+                    st.caption("Ground truth is unknown. Evaluated against active threshold.")
+
+                # Multi-detector metric breakdown
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("Energy OOD score", f"{res['energy']:.2f}", f"Threshold: {active_thr:.2f}")
+                with m2:
+                    st.metric("Softmax confidence", f"{res['conf']*100:.1f}%")
+                with m3:
+                    st.metric("Mahalanobis distance", f"{res['maha']:.1f}")
+
+            # Technical Rationale Expander
+            with st.expander("🔬 Understand this decision (Why did the model accept or reject this?)", expanded=False):
+                st.markdown(
+                    f"- **Classification Prediction**: The linear probe predicted **{res['pred'].upper()}** with **{res['conf']*100:.1f}% calibrated confidence**.\n"
+                    f"- **Uncertainty Decision**: The energy score is **{res['energy']:.2f}** vs active threshold **{active_thr:.2f}**.\n"
+                    f"- **Why can a high-confidence prediction be rejected?**\n"
+                    f"  Softmax probabilities measure relative logit ratios (exp(z_i) / sum(exp(z))). Even for an unfamiliar input, if one logit is slightly higher, softmax can output 80–95% confidence. The Energy detector computes the absolute free energy: E = -T * log(sum(exp(z/T))). If overall activations are moderate (energy higher than {active_thr:.2f}), the detector intercepts and flags the sample as unfamiliar.\n"
+                    f"- **Why can an impostor (e.g. horse or boot) produce low energy?**\n"
+                    f"  Deep features occasionally project unfamiliar edge patterns into known feature clusters. Under permissive thresholds, some impostors slip past. Switching to the **Strict Academic Benchmark ({thr_near_95:.2f})** catches 95% of them, but at the cost of rejecting more legitimate in-distribution inputs."
+                )
 
             # Altair Probability Bars
             prob_df = pd.DataFrame({
@@ -353,7 +411,7 @@ with tab1:
             )
             st.altair_chart(bar_chart, width="stretch")
 
-            # Altair Score Ruler
+            # Altair Score Ruler with clean formatting to prevent label overlap
             s_known = scores["Energy_known"]
             s_near = scores["Energy_near"]
             s_far = scores["Energy_far"]
@@ -363,18 +421,18 @@ with tab1:
             p_far = (float(np.percentile(s_far, 5)), float(np.percentile(s_far, 95)))
 
             bands_df = pd.DataFrame([
-                {"Split": "In-distribution", "x1": p_known[0], "x2": p_known[1], "color": "#3DDC97"},
-                {"Split": "Near-OOD", "x1": p_near[0], "x2": p_near[1], "color": "#FFB86B"},
-                {"Split": "Far-OOD", "x1": p_far[0], "x2": p_far[1], "color": "#A78BFA"},
+                {"Split": "Known In-Distribution", "x1": p_known[0], "x2": p_known[1], "color": "#3DDC97"},
+                {"Split": "Near-OOD (CIFAR held-out)", "x1": p_near[0], "x2": p_near[1], "color": "#FFB86B"},
+                {"Split": "Far-OOD (FashionMNIST)", "x1": p_far[0], "x2": p_far[1], "color": "#A78BFA"},
             ])
 
             ruler_chart = (
                 alt.Chart(bands_df)
-                .mark_bar(opacity=0.35, height=20)
+                .mark_bar(opacity=0.4, height=18)
                 .encode(
-                    x=alt.X("x1:Q", title="Energy score (higher = more unfamiliar)"),
+                    x=alt.X("x1:Q", title="Energy score (values to the right are more unfamiliar / OOD)"),
                     x2="x2:Q",
-                    y=alt.Y("Split:N", title=None, sort=["In-distribution", "Near-OOD", "Far-OOD"]),
+                    y=alt.Y("Split:N", title=None, axis=alt.Axis(labelColor="#E8ECF5", labelFontSize=12, labelPadding=8)),
                     color=alt.Color("color:N", scale=None),
                 )
             )
@@ -387,13 +445,20 @@ with tab1:
                 .encode(x="score:Q")
             )
 
-            full_ruler = (ruler_chart + rule).properties(
-                height=120, title="Score distribution bands (5th–95th percentile)"
+            thr_line_df = pd.DataFrame([{"thr": active_thr}])
+            thr_rule = (
+                alt.Chart(thr_line_df)
+                .mark_rule(color="#E8ECF5", strokeDash=[4, 4], strokeWidth=2)
+                .encode(x="thr:Q")
+            )
+
+            full_ruler = (ruler_chart + rule + thr_rule).properties(
+                height=150, title="Score distribution bands (5th–95th percentile) with active threshold"
             )
             st.altair_chart(full_ruler, width="stretch")
 
             pct = percentileofscore(s_known, res["energy"])
-            st.caption(f"This input's energy score falls at the **{pct:.1f}th percentile** among known-test samples.")
+            st.caption(f"This input's energy score falls at the **{pct:.1f}th percentile** among known-test samples. Dashed line indicates active threshold ({active_thr:.2f}).")
 
 # -----------------------------------------------------------------------------
 # TAB 2: Where the threshold hurts

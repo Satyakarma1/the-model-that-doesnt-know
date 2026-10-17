@@ -1,19 +1,22 @@
-"""Interactive Streamlit Web Dashboard for OOD Detection & Uncertainty Estimation.
+"""The Model That Doesn't Know: Uncertainty-Aware Vision Classification.
 
-Features:
-- Live Image Inference & Uncertainty Filtering (Pre-loaded samples or custom upload)
-- Adjustable Operating Thresholds (Balanced Deployment vs. Academic 95% TPR Benchmark)
-- Multi-Detector Consensus (Energy, Softmax Confidence, Mahalanobis Distance)
-- Visualizations & Failure Gallery Explorer
-- Quantitative Benchmark Tables (AUROC, FPR@95%, Calibration, Attractor Analysis)
-- One-click Benchmark Re-run
+Interactive Streamlit Web Dashboard:
+- Curated sample gallery driven by ground-truth manifest
+- Single-image inference playground & interactive calibrated probabilities
+- "Where the threshold hurts" trade-off physical explorer with live ROC curve
+- Diagnostic visualizations (score distributions, log-scale error-rate vs coverage)
+- Quantitative benchmark tables with live metric loading from results/metrics.json
 """
 
 import json
 from pathlib import Path
+import altair as alt
 import numpy as np
 import pandas as pd
 from PIL import Image
+from scipy.stats import percentileofscore
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_curve
 import streamlit as st
 import torch
 from torchvision import transforms
@@ -31,23 +34,41 @@ from src.config import (
 from src.features import build_backbone
 from src.probe import get_logits, get_proba
 from src.scores import energy_score, mahalanobis_score, msp_score
-from sklearn.linear_model import LogisticRegression
 
+# -----------------------------------------------------------------------------
+# Page Configuration & Modern Theme Setup
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="OOD Detector | AI/ML Recruitment Task",
-    page_icon="🧠",
+    page_title="The model that doesn't know",
+    page_icon=":material/psychology_alt:",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
+
+
+@st.cache_data
+def load_metrics(path_str: str) -> dict:
+    """Loads benchmark metrics from results/metrics.json."""
+    with open(path_str) as f:
+        return json.load(f)
+
+
+@st.cache_data
+def load_scores(path_str: str) -> dict[str, np.ndarray]:
+    """Loads precomputed detector score arrays from results/scores.npz."""
+    data = np.load(path_str)
+    return {k: data[k] for k in data.files}
+
+
+@st.cache_data
+def load_manifest(path_str: str) -> list[dict]:
+    """Loads verified sample gallery manifest."""
+    with open(path_str) as f:
+        return json.load(f)
 
 
 @st.cache_resource
 def load_system():
-    """Caches backbone, classifier, temperature, and Mahalanobis stats in memory.
-    
-    Loads pre-computed weights from results/model_weights.npz for standalone deployment.
-    Falls back to raw cache/ if model_weights.npz is not found.
-    """
+    """Initializes backbone, classifier probe, and detector statistics."""
     backbone = build_backbone(DEVICE)
     weights_path = PATHS["results"] / "model_weights.npz"
 
@@ -64,10 +85,10 @@ def load_system():
         cov = weights["gaussian_cov"]
         thr_near_95 = float(weights["thr_near_95"][0])
         thr_far_95 = float(weights["thr_far_95"][0])
-        thr_balanced = float(weights["thr_balanced"][0])
-        return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_balanced
+        thr_deploy = float(weights["thr_deploy"][0]) if "thr_deploy" in weights else float(weights["thr_balanced"][0])
+        return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_deploy
 
-    # Fallback to local feature cache if model_weights.npz is missing
+    # Fallback for local dev if weights not yet exported
     train_data = np.load(PATHS["cache"] / "features_known_train.npz")
     val_data = np.load(PATHS["cache"] / "features_known_val.npz")
     scaler = np.load(PATHS["cache"] / "scaler.npz")
@@ -85,7 +106,6 @@ def load_system():
     T, _, _ = fit_temperature(val_logits, y_val)
     means, cov = fit_gaussian_stats(X_train, y_train, n_classes=len(CIFAR_KNOWN_NAMES))
 
-    # Thresholds for Energy detector
     test_f = (np.load(PATHS["cache"] / "features_known_test.npz")["f"] - mean) / std
     near_f = (np.load(PATHS["cache"] / "features_near_ood.npz")["f"] - mean) / std
     far_f = (np.load(PATHS["cache"] / "features_far_ood.npz")["f"] - mean) / std
@@ -94,11 +114,12 @@ def load_system():
     score_near = energy_score(get_logits(clf, near_f), T=T)
     score_far = energy_score(get_logits(clf, far_f), T=T)
 
-    thr_near_95, near_fpr = fpr_at_tpr(score_id, score_near, target_tpr=TARGET_TPR)
-    thr_far_95, far_fpr = fpr_at_tpr(score_id, score_far, target_tpr=TARGET_TPR)
-    thr_balanced = -5.0
+    thr_near_95, _ = fpr_at_tpr(score_id, score_near, target_tpr=TARGET_TPR)
+    thr_far_95, _ = fpr_at_tpr(score_id, score_far, target_tpr=TARGET_TPR)
+    sorted_known = np.sort(score_id)
+    thr_deploy = float(sorted_known[int(0.90 * len(sorted_known))])
 
-    return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_balanced
+    return backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_deploy
 
 
 def classify_and_filter(img: Image.Image, backbone, clf, T, means, cov, mean, std, active_thr):
@@ -138,318 +159,495 @@ def classify_and_filter(img: Image.Image, backbone, clf, T, means, cov, mean, st
     }
 
 
-# Load models
-backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_balanced = load_system()
+# -----------------------------------------------------------------------------
+# Initialize System & Load Data
+# -----------------------------------------------------------------------------
+backbone, clf, T, means, cov, mean, std, thr_near_95, thr_far_95, thr_deploy = load_system()
+metrics = load_metrics(str(PATHS["metrics_json"]))
+scores = load_scores(str(PATHS["results"] / "scores.npz"))
 
-# Sidebar Info
-st.sidebar.title("🧠 OOD Detector")
-st.sidebar.markdown(
-    f"""
-    **Task 1**: *The Model That Doesn't Know*  
-    **Track**: AI & Machine Learning  
-    **Recruitment Cycle**: CodeChef-VIT 2026-27  
-    ---
-    **Known Classes (5)**:
-    - ✈️ Airplane
-    - 🚗 Automobile
-    - 🐦 Bird
-    - 🐱 Cat
-    - 🦌 Deer
-    
-    *(Note: Dog, Frog, Horse, Ship, Truck are held-out Near-OOD!)*
-    ---
-    **Fitted Temperature**: $T = {T:.3f}$  
-    **Near-OOD 95% Thr**: `{thr_near_95:.3f}`  
-    **Balanced Thr**: `{thr_balanced:.3f}`
-    """
+# -----------------------------------------------------------------------------
+# Sidebar Metadata (No Results)
+# -----------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### The model that doesn't know")
+    st.caption("AI & Machine Learning Track · Promotional Recruitment")
+
+    st.markdown("#### Known classes (5)")
+    st.markdown("- Airplane\n- Automobile\n- Bird\n- Cat\n- Deer")
+
+    st.markdown("#### Near-OOD held out (5)")
+    st.caption("Semantic neighbors excluded from training:")
+    st.markdown("- Dog *(neighbor of Cat)*\n- Frog *(neighbor of Bird)*\n- Horse *(neighbor of Deer)*\n- Ship *(neighbor of Airplane)*\n- Truck *(neighbor of Automobile)*")
+
+    st.markdown("#### Far-OOD domain")
+    st.caption("FashionMNIST test images upsampled to 3 channels (visually & semantically disjoint).")
+
+# -----------------------------------------------------------------------------
+# Hero Block & KPI Row
+# -----------------------------------------------------------------------------
+st.badge("Uncertainty-aware classification", icon=":material/radar:", color="violet")
+st.title("The model that doesn't know")
+st.markdown("### Five classes. Everything else is a maybe.")
+st.caption(
+    "A frozen ResNet-18 with a linear probe, scored by three independent uncertainty "
+    "measures and evaluated on a deliberately hard near-OOD split and an easy far-OOD one."
 )
 
-st.title("The Model That Doesn't Know")
-st.caption("Out-of-Distribution Detection & Selective Classification Study | Controlled Near-OOD vs. Far-OOD Regimes")
+# Extract headline numbers strictly from metrics.json
+known_acc = metrics["closed_set"]["test_accuracy"] * 100
 
-# Top Metrics Row
-with open(PATHS["metrics_json"]) as f:
-    results = json.load(f)
+# Find best near-OOD AUROC and detector
+near_entries = [m for m in metrics["metrics_table"] if m["ood_set"] == "near_ood"]
+best_near = max(near_entries, key=lambda x: x["auroc"])
+best_near_auroc = best_near["auroc"]
+best_near_method = best_near["method"]
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Known Test Accuracy", f"{results['closed_set']['test_accuracy']*100:.2f}%", "Closed-Set")
-col2.metric("Best Near-OOD AUROC", "0.7319", "Energy Detector")
-col3.metric("Best Far-OOD AUROC", "0.9408", "Mahalanobis")
-col4.metric("Calibration ECE", f"{results['calibration']['ece_before_temp_scaling']*100:.2f}%", f"T={T:.3f}")
+# Find best far-OOD AUROC and detector
+far_entries = [m for m in metrics["metrics_table"] if m["ood_set"] == "far_ood"]
+best_far = max(far_entries, key=lambda x: x["auroc"])
+best_far_auroc = best_far["auroc"]
+best_far_method = best_far["method"]
 
-# Main Tabs
-tab1, tab2, tab3 = st.tabs([
-    "🔍 Live Inference & Uncertainty Filter",
-    "📊 Publication Visualizations & Failure Gallery",
-    "📈 Benchmark Tables & Runner",
+ece_val = metrics["calibration"]["ece_before_temp_scaling"] * 100
+
+k1, k2, k3, k4 = st.columns(4)
+with k1.container(border=True):
+    st.metric("Known-set accuracy", f"{known_acc:.1f}%")
+    st.caption("5 classes · 5,000 held-out CIFAR images")
+with k2.container(border=True):
+    st.metric("Near-OOD AUROC", f"{best_near_auroc:.4f}")
+    st.caption(f"{best_near_method} · the hard regime")
+with k3.container(border=True):
+    st.metric("Far-OOD AUROC", f"{best_far_auroc:.4f}")
+    st.caption(f"{best_far_method} · the easy regime")
+with k4.container(border=True):
+    st.metric("Calibration ECE", f"{ece_val:.2f}%")
+    st.caption(f"T = {T:.3f} — already calibrated, scaling changes little")
+
+st.markdown("")
+
+# -----------------------------------------------------------------------------
+# Main Navigation Tabs
+# -----------------------------------------------------------------------------
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Probe an image",
+    "Where the threshold hurts",
+    "Diagnostics",
+    "Benchmark",
 ])
 
-# -------------------------------------------------------------
-# TAB 1: Live Inference Playground
-# -------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# TAB 1: Probe an image
+# -----------------------------------------------------------------------------
 with tab1:
-    st.markdown("### Interactive Single-Image Uncertainty Assessment")
-    st.write(
-        "Feed any image into the system. The model classifies the input into known categories, "
-        "while the **Energy OOD detector** decides whether the model is familiar with the input or should admit uncertainty."
-    )
-
-    # Operating Threshold Mode Selection
-    st.markdown("#### ⚙️ Uncertainty Decision Operating Mode")
-    mode_col, slider_col = st.columns([2, 1])
-
-    with mode_col:
-        operating_mode = st.radio(
-            "Select Operating Threshold Mode:",
-            [
-                f"Balanced Deployment Mode (Threshold: {thr_balanced:.2f}) — Recommended for Real-World Photos",
-                f"Strict Academic Near-OOD Benchmark (Threshold: {thr_near_95:.2f} @ 95% TPR)",
-                "Custom Threshold Slider",
-            ],
-            index=0,
-            horizontal=False,
-        )
-
-    if "Balanced Deployment Mode" in operating_mode:
-        active_energy_thr = thr_balanced
-        st.info(
-            f"💡 **Balanced Mode (Threshold = {thr_balanced:.2f})**: Calibrated to accept legitimate, high-confidence known classes "
-            f"(like clear Cats & Deer) while rejecting unknown categories (like Horses, Shoes, Clothing, and noise)."
-        )
-    elif "Strict Academic" in operating_mode:
-        active_energy_thr = thr_near_95
-        st.warning(
-            f"⚠️ **Strict Near-OOD Benchmark (Threshold = {thr_near_95:.2f})**: In this academic mode, the filter is set hyper-sensitively "
-            f"to catch 95% of subtle Near-OOD impostors (e.g. dogs/horses). However, as discovered in our study, this extreme threshold "
-            f"also rejects 73.3% of legitimate in-distribution samples. Switch to **Balanced Mode** for general image evaluation."
-        )
-    else:
-        with slider_col:
-            active_energy_thr = st.slider(
-                "Custom Energy Threshold (Higher = Stricter Rejection):",
-                min_value=-12.0,
-                max_value=0.0,
-                value=-5.0,
-                step=0.25,
-            )
-
-    st.markdown("---")
-
-    input_mode = st.radio(
-        "Select Image Source:",
-        ["Choose from Pre-loaded Evaluation Samples", "Upload Your Own Custom Image"],
-        horizontal=True,
+    source_choice = st.segmented_control(
+        "Image source",
+        options=["Curated samples", "Your own image"],
+        default="Curated samples",
+        label_visibility="collapsed",
+        key="tab1_source_choice",
     )
 
     image_to_test = None
-    sample_info = ""
-    is_custom_upload = False
+    sample_item = None
+    manifest_items = []
+    manifest_path = PATHS["figures"] / "samples" / "manifest.json"
+    if manifest_path.exists():
+        manifest_items = load_manifest(str(manifest_path))
 
-    if input_mode == "Choose from Pre-loaded Evaluation Samples":
-        sample_choice = st.selectbox(
-            "Select Evaluation Sample:",
-            [
-                "Known Class: Airplane (CIFAR-10 ID)",
-                "Known Class: Automobile (CIFAR-10 ID)",
-                "Known Class: Bird (CIFAR-10 ID)",
-                "Known Class: Cat (CIFAR-10 ID)",
-                "Known Class: Deer (CIFAR-10 ID)",
-                "Near-OOD (Unknown): Dog (Semantic neighbor of Cat)",
-                "Near-OOD (Unknown): Horse (Semantic neighbor of Deer)",
-                "Near-OOD (Unknown): Truck (Semantic neighbor of Automobile)",
-                "Far-OOD (Unknown): Ankle Boot (FashionMNIST)",
-                "Far-OOD (Unknown): T-shirt / Top (FashionMNIST)",
-            ],
-        )
-
-        sample_mapping = {
-            "Known Class: Airplane (CIFAR-10 ID)": ("sample_known_airplane.png", "known_test", 0, "Airplane (Known)"),
-            "Known Class: Automobile (CIFAR-10 ID)": ("sample_known_automobile.png", "known_test", 1, "Automobile (Known)"),
-            "Known Class: Bird (CIFAR-10 ID)": ("sample_known_bird.png", "known_test", 2, "Bird (Known)"),
-            "Known Class: Cat (CIFAR-10 ID)": ("sample_known_cat.png", "known_test", 3, "Cat (Known)"),
-            "Known Class: Deer (CIFAR-10 ID)": ("sample_known_deer.png", "known_test", 4, "Deer (Known)"),
-            "Near-OOD (Unknown): Dog (Semantic neighbor of Cat)": ("sample_near_dog.png", "near_ood", 0, "Dog (Near-OOD)"),
-            "Near-OOD (Unknown): Horse (Semantic neighbor of Deer)": ("sample_near_horse.png", "near_ood", 2, "Horse (Near-OOD)"),
-            "Near-OOD (Unknown): Truck (Semantic neighbor of Automobile)": ("sample_near_truck.png", "near_ood", 4, "Truck (Near-OOD)"),
-            "Far-OOD (Unknown): Ankle Boot (FashionMNIST)": ("sample_far_boot.png", "far_ood", 0, "Ankle Boot (Far-OOD)"),
-            "Far-OOD (Unknown): T-shirt / Top (FashionMNIST)": ("sample_far_tshirt.png", "far_ood", 1, "T-shirt (Far-OOD)"),
+    if source_choice == "Curated samples" and manifest_items:
+        role_labels = {
+            "known": "known class",
+            "near": "held out (near-OOD)",
+            "far": "held out (far-OOD)",
         }
-        filename, split_name, s_idx, sample_info = sample_mapping[sample_choice]
-        sample_img_path = PATHS["figures"] / "samples" / filename
-        if sample_img_path.exists():
-            image_to_test = Image.open(sample_img_path).convert("RGB")
-        else:
-            from src.data import load_image_at
-            raw_arr = load_image_at(split_name, s_idx)
-            image_to_test = Image.fromarray(raw_arr)
-
+        # Format options as TrueClass · role
+        sample_labels = [
+            f"{item['true_class'].title()} · {role_labels.get(item['role'], item['role'])} (Sample #{item['file'].split('_')[-1].split('.')[0]})"
+            for item in manifest_items
+        ]
+        chosen_label = st.selectbox(
+            "Select sample image",
+            options=sample_labels,
+            label_visibility="collapsed",
+            key="tab1_sample_select",
+        )
+        chosen_idx = sample_labels.index(chosen_label)
+        sample_item = manifest_items[chosen_idx]
+        sample_img_file = PATHS["figures"] / "samples" / sample_item["file"]
+        if sample_img_file.exists():
+            image_to_test = Image.open(sample_img_file).convert("RGB")
     else:
-        uploaded_file = st.file_uploader("Upload an image (PNG, JPG, JPEG):", type=["png", "jpg", "jpeg"])
+        uploaded_file = st.file_uploader(
+            "Upload image (PNG, JPG, JPEG)",
+            type=["png", "jpg", "jpeg"],
+            label_visibility="collapsed",
+            key="tab1_file_uploader",
+        )
         if uploaded_file is not None:
-            image_to_test = Image.open(uploaded_file)
-            sample_info = f"Uploaded file: {uploaded_file.name}"
-            is_custom_upload = True
+            image_to_test = Image.open(uploaded_file).convert("RGB")
 
     if image_to_test is not None:
-        c_left, c_right = st.columns([1, 2])
+        c_left, c_right = st.columns([1, 1.6])
+
         with c_left:
-            st.image(image_to_test, caption=sample_info, use_container_width=True)
+            with st.container(border=True):
+                st.image(image_to_test, width="stretch", alt="Input image under test")
+                if sample_item:
+                    st.caption(f"Ground truth: **{sample_item['true_class'].title()}** ({sample_item['role']} regime)")
+                else:
+                    st.caption("Custom image upload (Ground truth unlabelled)")
 
         with c_right:
-            res = classify_and_filter(image_to_test, backbone, clf, T, means, cov, mean, std, active_energy_thr)
+            active_thr = thr_deploy
+            res = classify_and_filter(
+                image_to_test, backbone, clf, T, means, cov, mean, std, active_thr
+            )
 
-            # Verdict Banner
-            if res["is_ood"]:
-                st.error(
-                    f"### 🛑 REJECTED: Uncertain / Out-of-Distribution\n\n"
-                    f"**Energy Score**: `{res['energy']:.3f}` ≥ Threshold `{active_energy_thr:.3f}`  \n"
-                    f"The model flags this image as unfamiliar and refuses to output a confident false guess."
-                )
-            else:
-                st.success(
-                    f"### ✅ ACCEPTED: Familiar In-Distribution Category\n\n"
-                    f"**Energy Score**: `{res['energy']:.3f}` < Threshold `{active_energy_thr:.3f}`  \n"
-                    f"The model recognizes this category with high familiarity."
-                )
+            with st.container(border=True):
+                if res["is_ood"]:
+                    st.error("Rejected — the model does not know this", icon=":material/cancel:")
+                    st.caption(f"Energy score {res['energy']:.2f} ≥ threshold {active_thr:.2f}")
+                else:
+                    st.success("Accepted as familiar", icon=":material/check_circle:")
+                    st.caption(f"Energy score {res['energy']:.2f} < threshold {active_thr:.2f}")
 
-            st.markdown(f"**Top Predicted Class**: `{res['pred'].upper()}` | **Calibrated Confidence**: `{res['conf']*100:.2f}%`")
+                m_col1, m_col2 = st.columns(2)
+                with m_col1:
+                    st.metric("Prediction", res["pred"].capitalize())
+                with m_col2:
+                    st.metric("Calibrated confidence", f"{res['conf']*100:.1f}%")
 
-            # Explanation Callout for Custom Uploads
-            if is_custom_upload:
-                with st.expander("🔬 Understand What Just Happened (Technical Rationale)", expanded=True):
-                    if "horse" in sample_info.lower():
-                        st.markdown(
-                            "🐎 **Why was the Horse rejected? (Correct Behavior!)**  \n"
-                            "Our classifier was trained on **5 classes only**: *Airplane, Automobile, Bird, Cat, and Deer*.  \n"
-                            "`Horse` is an **excluded Near-OOD category**! Because the model has never been taught what a horse is, "
-                            "it tried to guess based on background context (e.g. blue sky/water resembling bird habitats), "
-                            "**but the OOD detector intercepted it and correctly flagged it as REJECTED**. This is exactly how safety-critical ML should work!"
-                        )
-                    elif res["pred"].lower() in ["cat", "deer"] and not res["is_ood"]:
-                        st.markdown(
-                            f"✨ **Success**: The model correctly classified your image as **{res['pred'].upper()}** "
-                            f"with **{res['conf']*100:.1f}% confidence**, and the Energy score (`{res['energy']:.2f}`) confirmed it is a familiar category!"
-                        )
+                # Verdict diagnostic caption based on ground truth
+                if sample_item:
+                    role = sample_item["role"]
+                    if role == "known" and not res["is_ood"]:
+                        st.caption("Correct: known class, accepted.")
+                    elif role == "known" and res["is_ood"]:
+                        st.caption("False rejection: the model is familiar with this class but the threshold rejected it.")
+                    elif role in ["near", "far"] and res["is_ood"]:
+                        st.caption("Correct: outside the five known classes, rejected.")
                     else:
-                        st.markdown(
-                            f"- **Classifier Output**: Predicted **{res['pred'].upper()}** with {res['conf']*100:.1f}% confidence.  \n"
-                            f"- **Uncertainty Detector**: Energy score is `{res['energy']:.3f}` vs threshold `{active_energy_thr:.3f}`.  \n"
-                            f"- **Resolution Factor**: CIFAR-10 consists of tiny $32 \\times 32$ images. Crisp high-resolution web photos contain different high-frequency edge textures that slightly elevate distance metrics."
+                        st.caption(
+                            f"**Failure:** an unknown class was accepted as {res['pred'].capitalize()}. "
+                            "This is the failure mode the study is about."
                         )
+                else:
+                    st.caption("Ground truth is unknown. Evaluated against the deployment threshold.")
 
-            # Probability Distribution Chart
+            # Altair Probability Bars
             prob_df = pd.DataFrame({
                 "Class": [c.capitalize() for c in CIFAR_KNOWN_NAMES],
-                "Probability (%)": [p * 100 for p in res["probs"]],
+                "Probability": [float(p) for p in res["probs"]],
             })
-            st.bar_chart(prob_df.set_index("Class"), color="#1f77b4")
+            bar_chart = (
+                alt.Chart(prob_df)
+                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#7C5CFF")
+                .encode(
+                    x=alt.X("Probability:Q", axis=alt.Axis(format="%", title="Calibrated probability"), scale=alt.Scale(domain=[0, 1])),
+                    y=alt.Y("Class:N", sort="-x", title=None),
+                    tooltip=["Class", alt.Tooltip("Probability:Q", format=".1%")],
+                )
+                .properties(height=180, title="Calibrated class probabilities")
+            )
+            st.altair_chart(bar_chart, width="stretch")
 
-            # Score Breakdown Metrics
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Energy OOD Score", f"{res['energy']:.3f}", f"Threshold: {active_energy_thr:.3f}")
-            m2.metric("Softmax Confidence (MSP)", f"{res['conf']*100:.1f}%", f"Score: {res['msp']:.3f}")
-            m3.metric("Mahalanobis Distance", f"{res['maha']:.3f}", "Geometric outlier score")
+            # Altair Score Ruler
+            s_known = scores["Energy_known"]
+            s_near = scores["Energy_near"]
+            s_far = scores["Energy_far"]
 
-# -------------------------------------------------------------
-# TAB 2: Visualizations & Failure Gallery
-# -------------------------------------------------------------
+            p_known = (float(np.percentile(s_known, 5)), float(np.percentile(s_known, 95)))
+            p_near = (float(np.percentile(s_near, 5)), float(np.percentile(s_near, 95)))
+            p_far = (float(np.percentile(s_far, 5)), float(np.percentile(s_far, 95)))
+
+            bands_df = pd.DataFrame([
+                {"Split": "In-distribution", "x1": p_known[0], "x2": p_known[1], "color": "#3DDC97"},
+                {"Split": "Near-OOD", "x1": p_near[0], "x2": p_near[1], "color": "#FFB86B"},
+                {"Split": "Far-OOD", "x1": p_far[0], "x2": p_far[1], "color": "#A78BFA"},
+            ])
+
+            ruler_chart = (
+                alt.Chart(bands_df)
+                .mark_bar(opacity=0.35, height=20)
+                .encode(
+                    x=alt.X("x1:Q", title="Energy score (higher = more unfamiliar)"),
+                    x2="x2:Q",
+                    y=alt.Y("Split:N", title=None, sort=["In-distribution", "Near-OOD", "Far-OOD"]),
+                    color=alt.Color("color:N", scale=None),
+                )
+            )
+
+            marker_df = pd.DataFrame([{"score": res["energy"]}])
+            verdict_color = "#FF6B6B" if res["is_ood"] else "#3DDC97"
+            rule = (
+                alt.Chart(marker_df)
+                .mark_rule(color=verdict_color, strokeWidth=3)
+                .encode(x="score:Q")
+            )
+
+            full_ruler = (ruler_chart + rule).properties(
+                height=120, title="Score distribution bands (5th–95th percentile)"
+            )
+            st.altair_chart(full_ruler, width="stretch")
+
+            pct = percentileofscore(s_known, res["energy"])
+            st.caption(f"This input's energy score falls at the **{pct:.1f}th percentile** among known-test samples.")
+
+# -----------------------------------------------------------------------------
+# TAB 2: Where the threshold hurts
+# -----------------------------------------------------------------------------
 with tab2:
-    st.markdown("### Published Diagnostic Visualizations")
-    st.write(
-        "These four figures constitute the core empirical contributions of this study. "
-        "They clearly separate near vs. far OOD dynamics and demonstrate selective classification behavior."
+    st.markdown("### The fundamental trade-off of out-of-distribution detection")
+    st.caption("Dragging the threshold physically demonstrates why near-OOD detection requires sacrificing legitimate inputs.")
+
+    ctrl_col, btn_col = st.columns([1, 1.5])
+    with ctrl_col:
+        method = st.segmented_control(
+            "Scoring method",
+            options=["Energy", "MSP", "Mahalanobis"],
+            default="Energy",
+            key="tab2_method",
+        )
+
+    # Load arrays for method
+    s_known = scores[f"{method}_known"]
+    s_near = scores[f"{method}_near"]
+    s_far = scores[f"{method}_far"]
+
+    # Compute 95% TPR threshold for near-OOD
+    from src.evaluate import fpr_at_tpr
+    m_thr_95, m_near_fpr = fpr_at_tpr(s_known, s_near, target_tpr=TARGET_TPR)
+
+    # Compute deployment threshold (known false rejection <= 10%)
+    sorted_k = np.sort(s_known)
+    m_thr_deploy = float(sorted_k[int(0.90 * len(sorted_k))])
+
+    min_val = float(min(np.min(s_known), np.min(s_near), np.min(s_far)))
+    max_val = float(max(np.max(s_known), np.max(s_near), np.max(s_far)))
+
+    # Session state for threshold slider
+    slider_key = f"tab2_slider_{method}"
+    if slider_key not in st.session_state:
+        st.session_state[slider_key] = round(float(m_thr_deploy), 2)
+
+    with btn_col:
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("Catch 95% of near-OOD", icon=":material/target:", key=f"btn_95_{method}"):
+                st.session_state[slider_key] = round(float(m_thr_95), 2)
+                st.rerun()
+        with b2:
+            if st.button("Keep false rejections under 10%", icon=":material/balance:", key=f"btn_dep_{method}"):
+                st.session_state[slider_key] = round(float(m_thr_deploy), 2)
+                st.rerun()
+
+    active_slider_val = st.slider(
+        f"Decision threshold ({method})",
+        min_value=round(min_val, 2),
+        max_value=round(max_val, 2),
+        step=0.05,
+        key=slider_key,
     )
 
-    fig_tab1, fig_tab2, fig_tab3, fig_tab4 = st.tabs([
-        "1. Score Distributions",
-        "2. Risk-Coverage Curves",
-        "3. Per-Class AUROC (Attractor Analysis)",
-        "4. Failure Gallery (Falsely Accepted OOD)",
-    ])
+    # Compute readouts
+    known_rej = float(np.mean(s_known >= active_slider_val))
+    near_caught = float(np.mean(s_near >= active_slider_val))
+    far_caught = float(np.mean(s_far >= active_slider_val))
 
-    with fig_tab1:
-        st.subheader("OOD Score Distributions: Known vs. Near-OOD vs. Far-OOD")
-        st.image(str(PATHS["figures"] / "score_distributions.png"), use_container_width=True)
-        st.info(
-            "**Key Finding**: In all three detectors, Far-OOD (FashionMNIST, purple) is sharply separated to the right. "
-            "However, Near-OOD (CIFAR held-out, orange) overlaps substantially with Known Test (blue), "
-            "illustrating the fundamental challenge of semantically neighboring out-of-distribution detection."
+    r1, r2, r3 = st.columns(3)
+    with r1.container(border=True):
+        st.metric("Known inputs rejected", f"{known_rej*100:.1f}%")
+        st.caption("false rejection rate")
+    with r2.container(border=True):
+        st.metric("Near-OOD caught", f"{near_caught*100:.1f}%")
+        st.caption("the hard regime")
+    with r3.container(border=True):
+        st.metric("Far-OOD caught", f"{far_caught*100:.1f}%")
+        st.caption("the easy regime")
+
+    if near_caught >= 0.94:
+        st.warning(
+            f"To catch 95% of near-OOD inputs this threshold rejects {known_rej*100:.0f}% of legitimate ones.",
+            icon=":material/warning:",
         )
 
-    with fig_tab2:
-        st.subheader("Risk-Coverage Curves: Selective Classification")
-        st.image(str(PATHS["figures"] / "risk_coverage.png"), use_container_width=True)
-        st.info(
-            "**Key Finding**: As the model is allowed to reject low-confidence inputs (coverage decreases from 1.0 to 0.5), "
-            "classification accuracy rises from 92.02% toward 99%. This directly satisfies the prompt requirement: "
-            "'admitting uncertainty rather than misclassifying'."
-        )
+    # Altair ROC Curve with current operating point
+    y_near = np.concatenate([np.zeros_like(s_known), np.ones_like(s_near)])
+    s_near_all = np.concatenate([s_known, s_near])
+    fpr_n, tpr_n, _ = roc_curve(y_near, s_near_all)
 
-    with fig_tab3:
-        st.subheader("Attractor Analysis: Per-Class AUROC")
-        st.image(str(PATHS["figures"] / "per_class_auroc.png"), use_container_width=True)
-        st.info(
-            "**Key Finding**: Automobile is the easiest known class to protect (Near AUROC: 0.8720), whereas Cat (0.6789) "
-            "and Deer (0.6825) act as 'magnets' for unknown inputs due to visual resemblance to Dogs and Horses."
-        )
+    y_far = np.concatenate([np.zeros_like(s_known), np.ones_like(s_far)])
+    s_far_all = np.concatenate([s_known, s_far])
+    fpr_f, tpr_f, _ = roc_curve(y_far, s_far_all)
 
-    with fig_tab4:
-        st.subheader("Failure Gallery: 5x5 Grid of Falsely Accepted OOD Inputs at 95% TPR")
-        st.image(str(PATHS["figures"] / "failure_gallery.png"), use_container_width=True)
-        st.info(
-            "**Failure Analysis**: These 25 images belong to excluded classes (orange border = Near-OOD dog/horse/truck; "
-            "purple border = Far-OOD fashion) but slipped past the 95% TPR threshold. "
-            "The model confidently mislabelled dogs as cats and horses as deer."
-        )
+    step_n = max(1, len(fpr_n) // 150)
+    df_n = pd.DataFrame({"FPR": fpr_n[::step_n], "TPR": tpr_n[::step_n], "Regime": "Near-OOD (CIFAR held-out)"})
+    step_f = max(1, len(fpr_f) // 150)
+    df_f = pd.DataFrame({"FPR": fpr_f[::step_f], "TPR": tpr_f[::step_f], "Regime": "Far-OOD (FashionMNIST)"})
+    df_roc = pd.concat([df_n, df_f])
 
-# -------------------------------------------------------------
-# TAB 3: Benchmark Tables & Test Runner
-# -------------------------------------------------------------
+    roc_lines = (
+        alt.Chart(df_roc)
+        .mark_line(strokeWidth=2.5)
+        .encode(
+            x=alt.X("FPR:Q", title="False Positive Rate (Known Rejection)", scale=alt.Scale(domain=[0, 1])),
+            y=alt.Y("TPR:Q", title="True Positive Rate (OOD Detection)", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color(
+                "Regime:N",
+                scale=alt.Scale(domain=["Near-OOD (CIFAR held-out)", "Far-OOD (FashionMNIST)"], range=["#FFB86B", "#A78BFA"]),
+                title=None,
+            ),
+        )
+    )
+
+    point_df = pd.DataFrame([{"FPR": known_rej, "TPR": near_caught}])
+    operating_point = (
+        alt.Chart(point_df)
+        .mark_circle(size=140, color="#FF6B6B")
+        .encode(x="FPR:Q", y="TPR:Q")
+    )
+
+    full_roc = (roc_lines + operating_point).properties(
+        height=320, title=f"Receiver Operating Characteristic (ROC) — {method}"
+    )
+    st.altair_chart(full_roc, width="stretch")
+
+    # Method AUROC caption
+    curr_entry = next((m for m in metrics["metrics_table"] if m["method"] == method and m["ood_set"] == "near_ood"), None)
+    if curr_entry:
+        st.caption(f"Near-OOD AUROC for {method}: **{curr_entry['auroc']:.4f}** (FPR@95: {curr_entry['fpr_at_95tpr']*100:.2f}%)")
+
+# -----------------------------------------------------------------------------
+# TAB 3: Diagnostics
+# -----------------------------------------------------------------------------
 with tab3:
-    st.markdown("### Quantitative Benchmark Summary")
+    st.markdown("### Published diagnostic visualizations")
 
-    bench_df = pd.DataFrame(results["metrics_table"])
+    # 1. Score distributions
+    with st.container(border=True):
+        st.markdown("#### 1. Score distributions: Known vs. Near-OOD vs. Far-OOD")
+        st.image(str(PATHS["figures"] / "score_distributions.png"), width="stretch", alt="OOD Score Distributions")
+        st.caption("Near-OOD overlaps known; far-OOD separates cleanly.")
+
+    # 2. Risk-coverage curves + log-scale error rate
+    with st.container(border=True):
+        st.markdown("#### 2. Risk-coverage: Selective classification accuracy & error rate")
+        st.image(str(PATHS["figures"] / "risk_coverage.png"), width="stretch", alt="Risk-Coverage Curves")
+
+        # Second chart: error rate on log scale
+        risk_cov_json = PATHS["results"] / "risk_coverage.json"
+        if risk_cov_json.exists():
+            with open(risk_cov_json) as f:
+                rc_data = json.load(f)
+            err_rows = []
+            for m_name, m_dict in rc_data.items():
+                for c_val, r_val in zip(m_dict["coverage"], m_dict["risk"]):
+                    err_rows.append({
+                        "Method": m_name,
+                        "Coverage": float(c_val),
+                        "ErrorRate": max(float(r_val), 0.001),
+                    })
+            err_df = pd.DataFrame(err_rows)
+            err_chart = (
+                alt.Chart(err_df)
+                .mark_line(strokeWidth=2.2)
+                .encode(
+                    x=alt.X("Coverage:Q", title="Coverage (Proportion of inputs accepted)", scale=alt.Scale(domain=[0.1, 1.0])),
+                    y=alt.Y("ErrorRate:Q", scale=alt.Scale(type="log"), title="Error Rate (log scale)", axis=alt.Axis(format="%")),
+                    color=alt.Color("Method:N", scale=alt.Scale(domain=["MSP", "Energy", "Mahalanobis"], range=["#7C5CFF", "#3DDC97", "#A78BFA"]), title=None),
+                )
+                .properties(height=260, title="Selective classification error rate vs coverage (log scale)")
+            )
+            st.altair_chart(err_chart, width="stretch")
+            st.caption("As coverage decreases from 1.0 to 0.5, error rate drops by approximately 9× (from 8% to under 1%).")
+
+    # 3. Per-class AUROC
+    with st.container(border=True):
+        st.markdown("#### 3. Attractor analysis: Per-class AUROC")
+        st.image(str(PATHS["figures"] / "per_class_auroc.png"), width="stretch", alt="Per-Class AUROC Attractor Analysis")
+        near_per_class = metrics["per_class_auroc"]["near_ood"]
+        weakest = sorted(near_per_class.items(), key=lambda x: x[1])[:2]
+        st.caption(
+            f"Classes {weakest[0][0].capitalize()} ({weakest[0][1]:.4f}) and {weakest[1][0].capitalize()} ({weakest[1][1]:.4f}) "
+            "are the weakest known classes, acting as attractors for dogs and horses."
+        )
+
+    # 4. Failure gallery
+    with st.container(border=True):
+        st.markdown("#### 4. Failure gallery: Falsely accepted OOD inputs at 95% TPR")
+        st.image(str(PATHS["figures"] / "failure_gallery.png"), width="stretch", alt="Failure Gallery of Falsely Accepted OOD")
+        st.caption("Orange border = Near-OOD, violet border = Far-OOD. These samples were falsely accepted at the 95% TPR threshold.")
+
+# -----------------------------------------------------------------------------
+# TAB 4: Benchmark
+# -----------------------------------------------------------------------------
+with tab4:
+    st.markdown("### Quantitative benchmark summary")
+
+    bench_df = pd.DataFrame(metrics["metrics_table"])
     st.dataframe(
         bench_df[["method", "ood_label", "auroc", "fpr_at_95tpr", "threshold"]].rename(
             columns={
                 "method": "Detector Method",
                 "ood_label": "Evaluation Dataset",
-                "auroc": "AUROC (Higher = Better)",
-                "fpr_at_95tpr": "FPR @ 95% TPR (Lower = Better)",
+                "auroc": "AUROC",
+                "fpr_at_95tpr": "FPR @ 95% TPR",
                 "threshold": "Decision Threshold",
             }
         ),
-        use_container_width=True,
+        column_config={
+            "AUROC": st.column_config.NumberColumn("AUROC", format="%.4f"),
+            "FPR @ 95% TPR": st.column_config.ProgressColumn("FPR @ 95% TPR", format="%.1f%%", min_value=0.0, max_value=1.0),
+            "Decision Threshold": st.column_config.NumberColumn("Decision Threshold", format="%.4f"),
+        },
+        hide_index=True,
+        width="stretch",
     )
 
-    st.markdown("### Attractor Breakdown (Energy Detector)")
+    st.markdown("#### Selective classification coverage at 95% accuracy")
+    cov_rows = []
+    for m in ["MSP", "Energy", "Mahalanobis"]:
+        rc_info = metrics["risk_coverage"].get(m, {})
+        cov_rows.append({
+            "Detector": m,
+            "AURC": rc_info.get("aurc", 0.0),
+            "Coverage at 95% Accuracy": f"{rc_info.get('coverage_at_95acc', 0.0)*100:.1f}%",
+        })
+    st.dataframe(pd.DataFrame(cov_rows), hide_index=True, width="stretch")
+
+    st.markdown("#### Attractor breakdown (Energy detector)")
     attractor_rows = []
     for c in CIFAR_KNOWN_NAMES:
         attractor_rows.append({
             "Known Class": c.capitalize(),
-            "Near-OOD AUROC": results["per_class_auroc"]["near_ood"][c],
-            "Far-OOD AUROC": results["per_class_auroc"]["far_ood"][c],
-            "Falsely Accepted Inputs (Count)": results["ood_to_known_confusion"].get(c, 0),
+            "Near-OOD AUROC": metrics["per_class_auroc"]["near_ood"][c],
+            "Far-OOD AUROC": metrics["per_class_auroc"]["far_ood"][c],
+            "Falsely Accepted Impostors": metrics["ood_to_known_confusion"].get(c, 0),
         })
-    st.dataframe(pd.DataFrame(attractor_rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(attractor_rows), hide_index=True, width="stretch")
 
-    st.markdown("---")
-    st.subheader("Re-Execute Evaluation Suite")
-    st.write("Click below to re-run the full pipeline and refresh metrics and figures from cached features.")
+    with st.container(border=True):
+        st.markdown("#### Model calibration")
+        cal_pre = metrics["calibration"]["ece_before_temp_scaling"] * 100
+        cal_post = metrics["calibration"]["ece_after_temp_scaling"] * 100
+        cal_T = metrics["calibration"]["optimal_temperature"]
+        st.write(
+            f"ECE = {cal_pre:.2f}%. Temperature scaling (T = {cal_T:.3f}) does not improve it (ECE = {cal_post:.2f}%); "
+            "a regularised logistic probe on frozen features is already well calibrated."
+        )
 
-    if st.button("🚀 Re-Run Full Benchmark Pipeline", type="primary"):
-        cache_train = PATHS["cache"] / "features_known_train.npz"
-        data_cifar = PATHS["data"] / "cifar-10-batches-py"
-        if not cache_train.exists() and not data_cifar.exists():
-            st.warning(
-                "⚠️ Full re-training requires local raw datasets or cached feature files (~200MB, excluded from GitHub). "
-                "The dashboard is operating in pre-compiled deployment mode with `results/model_weights.npz` and `results/metrics.json`."
-            )
-        else:
-            with st.spinner("Executing pipeline (evaluating detectors, risk-coverage, rendering figures)..."):
-                try:
+    with st.container(border=True):
+        st.markdown("#### Rebuild benchmark")
+        st.caption("Re-executes the full benchmark pipeline. Requires local cache/ and is unavailable on Streamlit Cloud.")
+        if st.button("Rebuild from cached features", icon=":material/refresh:"):
+            cache_train = PATHS["cache"] / "features_known_train.npz"
+            if not cache_train.exists():
+                st.warning("Rebuild requires local cached features (~200MB, excluded from repository).", icon=":material/info:")
+            else:
+                with st.spinner("Rebuilding benchmark suite..."):
                     from src.run_all import run
-                    updated_results = run()
-                    st.success(f"Benchmark completed successfully in {updated_results['timing']['total_seconds']} seconds! Refresh to see new figures.")
-                except Exception as e:
-                    st.error(f"Execution failed: {e}")
+                    res = run()
+                st.success(f"Benchmark rebuilt in {res['timing']['total_seconds']}s. Refresh to view updated figures.")

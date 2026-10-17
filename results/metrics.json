@@ -1,0 +1,141 @@
+{
+  "closed_set": {
+    "validation_accuracy": 0.9278,
+    "test_accuracy": 0.9202,
+    "chosen_C": 0.01,
+    "confusion_matrix": [
+      [
+        947,
+        9,
+        23,
+        9,
+        12
+      ],
+      [
+        19,
+        970,
+        4,
+        6,
+        1
+      ],
+      [
+        31,
+        2,
+        858,
+        47,
+        62
+      ],
+      [
+        11,
+        2,
+        37,
+        911,
+        39
+      ],
+      [
+        4,
+        1,
+        42,
+        38,
+        915
+      ]
+    ]
+  },
+  "calibration": {
+    "optimal_temperature": 0.946,
+    "ece_before_temp_scaling": 0.0077,
+    "ece_after_temp_scaling": 0.0079,
+    "nll_val_pre": 0.1956,
+    "nll_val_post": 0.1952
+  },
+  "metrics_table": [
+    {
+      "method": "MSP",
+      "ood_set": "near_ood",
+      "ood_label": "Near-OOD (CIFAR Held-out)",
+      "auroc": 0.7182,
+      "fpr_at_95tpr": 0.7456,
+      "threshold": -0.9991
+    },
+    {
+      "method": "MSP",
+      "ood_set": "far_ood",
+      "ood_label": "Far-OOD (FashionMNIST)",
+      "auroc": 0.8677,
+      "fpr_at_95tpr": 0.3976,
+      "threshold": -0.9743
+    },
+    {
+      "method": "Energy",
+      "ood_set": "near_ood",
+      "ood_label": "Near-OOD (CIFAR Held-out)",
+      "auroc": 0.7319,
+      "fpr_at_95tpr": 0.733,
+      "threshold": -8.1295
+    },
+    {
+      "method": "Energy",
+      "ood_set": "far_ood",
+      "ood_label": "Far-OOD (FashionMNIST)",
+      "auroc": 0.8972,
+      "fpr_at_95tpr": 0.336,
+      "threshold": -5.2923
+    },
+    {
+      "method": "Mahalanobis",
+      "ood_set": "near_ood",
+      "ood_label": "Near-OOD (CIFAR Held-out)",
+      "auroc": 0.6824,
+      "fpr_at_95tpr": 0.8056,
+      "threshold": 19.7204
+    },
+    {
+      "method": "Mahalanobis",
+      "ood_set": "far_ood",
+      "ood_label": "Far-OOD (FashionMNIST)",
+      "auroc": 0.9408,
+      "fpr_at_95tpr": 0.3206,
+      "threshold": 23.8758
+    }
+  ],
+  "per_class_auroc": {
+    "near_ood": {
+      "airplane": 0.7286,
+      "automobile": 0.872,
+      "bird": 0.6973,
+      "cat": 0.6789,
+      "deer": 0.6825
+    },
+    "far_ood": {
+      "airplane": 0.8945,
+      "automobile": 0.9597,
+      "bird": 0.879,
+      "cat": 0.8704,
+      "deer": 0.8822
+    }
+  },
+  "ood_to_known_confusion": {
+    "airplane": 22,
+    "automobile": 127,
+    "bird": 0,
+    "cat": 65,
+    "deer": 35
+  },
+  "risk_coverage": {
+    "MSP": {
+      "aurc": 0.0115,
+      "coverage_at_90acc": 1.0
+    },
+    "Energy": {
+      "aurc": 0.019,
+      "coverage_at_90acc": 1.0
+    },
+    "Mahalanobis": {
+      "aurc": 0.0717,
+      "coverage_at_90acc": 1.0
+    }
+  },
+  "timing": {
+    "total_seconds": 36.48
+  }
+}

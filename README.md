@@ -2,6 +2,8 @@
 
 An empirical machine learning study investigating out-of-distribution (OOD) detection, probability calibration, and selective classification in computer vision.
 
+> 🚀 **Live Interactive Demo:** [https://satyakarma1-the-model-that-doesnt-know-app-zd4ljo.streamlit.app/](https://satyakarma1-the-model-that-doesnt-know-app-zd4ljo.streamlit.app/)
+
 
 
 ---
@@ -138,6 +140,9 @@ ood-detector/
 ## 6. How to Run
 
 ### 6.1 Launch the Interactive Streamlit Web Dashboard
+
+- **Live Deployed App:** [https://satyakarma1-the-model-that-doesnt-know-app-zd4ljo.streamlit.app/](https://satyakarma1-the-model-that-doesnt-know-app-zd4ljo.streamlit.app/)
+- **Local Execution:**
 ```bash
 streamlit run app.py
 ```
